@@ -22,34 +22,25 @@ if not API_KEY or not API_SECRET:
 client = DeltaRestClient(base_url=BASE_URL, api_key=API_KEY, api_secret=API_SECRET)
 
 def pick_random_tradable_product():
-    """
-    Fetch products and pick a random tradeable product.
-    We'll filter for products that allow trading and have a reasonable 'min_size' if available.
-    """
     logging.info("Fetching products...")
-    products_resp = client.get_products()  # library method; returns list/dict depending on client
-    # Normalize: if dict with 'result' key, handle it
-    products = products_resp.get('result') if isinstance(products_resp, dict) and 'result' in products_resp else products_resp
+
+    products_resp = client.list_products()   # FIXED
+
+    products = products_resp.get("result", [])
 
     if not products:
-        raise RuntimeError("No products returned from API.")
+        raise Exception("No products returned from Delta API")
 
-    # Filter: keep products with tradable == True (best-effort)
-    tradable = []
-    for p in products:
-        try:
-            # example keys: 'symbol', 'product_id', 'tradeable'
-            if p.get('tradeable', True):  # if key missing, assume tradable
-                tradable.append(p)
-        except Exception:
-            continue
+    tradable = [p for p in products if p.get("is_active")]
 
     if not tradable:
-        tradable = products  # fallback
+        raise Exception("No active tradable products found")
 
-    chosen = random.choice(tradable)
-    logging.info(f"Chosen product: {chosen.get('symbol') or chosen.get('name') or chosen.get('product_id')}")
-    return chosen
+    product = random.choice(tradable)
+    logging.info(f"Selected random product: {product.get('symbol')}")
+
+    return product
+
 
 def place_market_buy_and_sell(product):
     """
