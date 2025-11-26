@@ -1,108 +1,116 @@
-# bot.py
 import os
-import time
 import random
 import logging
+from delta_rest_client import DeltaRestClient
 
-# Try to import the official client. If import fails, instruct user.
-try:
-    from delta_rest_client import DeltaRestClient, OrderType
-except Exception as e:
-    raise SystemExit("Please install 'delta-rest-client' (pip install delta-rest-client). Error: " + str(e))
+# Logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-
+# Load API credentials
 API_KEY = os.getenv("DELTA_API_KEY")
 API_SECRET = os.getenv("DELTA_API_SECRET")
-BASE_URL = os.getenv("DELTA_BASE_URL", "https://testnet-api.delta.exchange")  # default to testnet
+BASE_URL = os.getenv("DELTA_BASE_URL", "https://api.deltaex.org")
 
-if not API_KEY or not API_SECRET:
-    raise SystemExit("Set DELTA_API_KEY and DELTA_API_SECRET as environment variables (use testnet keys).")
+client = DeltaRestClient(
+    api_key=API_KEY,
+    api_secret=API_SECRET,
+    base_url=BASE_URL
+)
 
-client = DeltaRestClient(base_url=BASE_URL, api_key=API_KEY, api_secret=API_SECRET)
 
-def pick_random_tradable_product():
+# ---------------------------
+# Fetch a random active product
+# ---------------------------
+def pick_random_product():
     logging.info("Fetching products...")
 
-    products_resp = client.list_products()   # FIXED
+    try:
+        response = client.list_products()  # CORRECT METHOD
+    except Exception as e:
+        logging.error(f"API error while fetching products: {e}")
+        raise
 
-    products = products_resp.get("result", [])
+    products = response.get("result", [])
 
     if not products:
-        raise Exception("No products returned from Delta API")
+        raise Exception("No products returned by API")
 
-    tradable = [p for p in products if p.get("is_active")]
+    active = [p for p in products if p.get("is_active")]
 
-    if not tradable:
+    if not active:
         raise Exception("No active tradable products found")
 
-    product = random.choice(tradable)
-    logging.info(f"Selected random product: {product.get('symbol')}")
+    chosen = random.choice(active)
+    logging.info(f"Selected product: {chosen['symbol']}")
 
-    return product
+    return chosen
 
 
-def place_market_buy_and_sell(product):
-    """
-    Place a market buy order of a tiny size, then place market sell to close.
-    Adjust 'size' conservatively (use product['min_size'] if provided).
-    """
-    pid = product.get('id') or product.get('product_id') or product.get('productId')  # different clients use different keys
-    symbol = product.get('symbol') or product.get('name')
+# ---------------------------
+# Test BUY order
+# ---------------------------
+def place_buy(product):
+    logging.info("Placing TEST BUY order...")
 
-    # Determine size: try min_size or use a tiny default like 1 (you should customize per product)
-    size = None
-    for k in ('min_size', 'minimum_order_size', 'lot_size', 'min_order_size'):
-        if k in product:
-            try:
-                size = float(product[k])
-                break
-            except Exception:
-                pass
-    if size is None:
-        size = 1  # very small default — change as required
+    payload = {
+        "product_id": product["id"],
+        "order_type": "market",
+        "side": "buy",
+        "size": 1  # test size
+    }
 
-    # To be extremely safe for testing on testnet, reduce size further
-    size = max(0.0001, float(size))  # ensure a small positive size
-
-    logging.info(f"Placing MARKET BUY for product_id={pid}, symbol={symbol}, size={size}")
     try:
-        # The library method name can be place_order or place_market_order. We'll try place_order with OrderType.MARKET
-        order_resp = client.place_order(
-            product_id=pid,
-            side='buy',
-            size=size,
-            order_type=OrderType.MARKET
-        )
+        resp = client.create_order(payload)
+        logging.info(f"BUY ORDER RESPONSE: {resp}")
+        return resp
     except Exception as e:
-        logging.error("Buy order failed: %s", e)
-        return
+        logging.error(f"Error placing BUY order: {e}")
+        raise
 
-    logging.info("Buy response: %s", order_resp)
 
-    # Wait briefly then place sell to close
-    time.sleep(3)
+# ---------------------------
+# Test SELL order
+# ---------------------------
+def place_sell(product):
+    logging.info("Placing TEST SELL order...")
 
-    logging.info(f"Placing MARKET SELL for product_id={pid}, size={size}")
+    payload = {
+        "product_id": product["id"],
+        "order_type": "market",
+        "side": "sell",
+        "size": 1
+    }
+
     try:
-        sell_resp = client.place_order(
-            product_id=pid,
-            side='sell',
-            size=size,
-            order_type=OrderType.MARKET
-        )
+        resp = client.create_order(payload)
+        logging.info(f"SELL ORDER RESPONSE: {resp}")
+        return resp
     except Exception as e:
-        logging.error("Sell order failed: %s", e)
-        return
+        logging.error(f"Error placing SELL order: {e}")
+        raise
 
-    logging.info("Sell response: %s", sell_resp)
 
+# ---------------------------
+# Main bot logic
+# ---------------------------
 def main():
+    logging.info("Bot started.")
+
     try:
-        product = pick_random_tradable_product()
-        place_market_buy_and_sell(product)
+        product = pick_random_product()
+
+        # Test orders
+        buy = place_buy(product)
+        sell = place_sell(product)
+
+        logging.info("Bot cycle complete.")
+
     except Exception as e:
-        logging.exception("Error in bot run: %s", e)
+        logging.error(f"Bot error: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     main()
